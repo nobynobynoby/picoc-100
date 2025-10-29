@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(picoc-100 picoc-100.cpp )
+add_executable(picoc-100 picoc-100.cpp usb_descriptors.cpp)
 
 pico_set_program_name(picoc-100 "picoc-100")
 pico_set_program_version(picoc-100 "0.1")
@@ -56,6 +56,8 @@ target_include_directories(picoc-100 PRIVATE
 # Add any user requested libraries
 target_link_libraries(picoc-100 
         hardware_i2c
+        tinyusb_device
+        tinyusb_board
         )
 
 pico_add_extra_outputs(picoc-100)

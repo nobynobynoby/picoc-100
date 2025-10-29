@@ -2,6 +2,10 @@
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 
+// USB-MIDI includes
+#include "pico/unique_id.h"
+#include "tusb.h"
+
 // I2C defines
 // This example will use I2C0 on GPIO8 (SDA) and GPIO9 (SCL) running at 400KHz.
 // Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
@@ -39,6 +43,9 @@ int current_key = 0;   // Initial value is 0 (corresponds to 'C' in segCodeDeg)
 
 // Fixed pattern for State 2 (0-3, representing patterns 1-4)
 int fixed_pattern = 0;  // Initial value is 0 (pattern 1)
+
+// Current system state (for MIDI callback access)
+int current_state = STATE_IC_UFLET_1;
 
 // Button event structure
 struct ButtonEvent {
@@ -545,6 +552,81 @@ void display_degree(int number) {
     }
 }
 
+// USB-MIDI callback functions
+void tud_midi_rx_cb(uint8_t itf)
+{
+    (void) itf;
+    
+    uint8_t packet[4];
+    while (tud_midi_available()) {
+        if (tud_midi_packet_read(packet)) {
+            printf("MIDI RX: %02X %02X %02X %02X\n", packet[0], packet[1], packet[2], packet[3]);
+            
+            // Check if this is a Control Change message
+            uint8_t message_type = packet[1] & 0xF0;
+            uint8_t channel = packet[1] & 0x0F;
+            
+            if (message_type == 0xB0) {  // Control Change
+                uint8_t controller = packet[2];
+                uint8_t value = packet[3];
+                
+                // Check for channel 15 (internal 14), controller 15
+                if (channel == 14 && controller == 15) {
+                    printf("Received CC: Ch%d CC%d Val%d\n", channel + 1, controller, value);
+                    
+                    // Ignore if current state is FIXED (2)
+                    if (current_state == STATE_FIXED) {
+                        printf("Ignoring CC in FIXED state\n");
+                        return;
+                    }
+                    
+                    // Set current_key to received value (clamped to 0-11)
+                    current_key = value % 12;
+                    current_code = 0;  // Reset current_code to 0
+                    
+                    printf("CC received: current_key set to %d, current_code reset to 0\n", current_key);
+                    
+                    // Update LED display
+                    int combined_value = (current_code + current_key) % 12;
+                    display_degree(combined_value);
+                    printf("Display updated to show combined value: (%d + %d) mod 12 = %d\n", 
+                           current_code, current_key, combined_value);
+                }
+            }
+        }
+    }
+}
+
+// Send a simple MIDI note on message
+void send_midi_note_on(uint8_t channel, uint8_t note, uint8_t velocity)
+{
+    uint8_t packet[4] = {0x09, (uint8_t)(0x90 | channel), note, velocity};
+    if (tud_midi_mounted()) {
+        tud_midi_packet_write(packet);
+        printf("MIDI TX: Note On Ch%d Note%d Vel%d\n", channel, note, velocity);
+    }
+}
+
+// Send a simple MIDI note off message  
+void send_midi_note_off(uint8_t channel, uint8_t note, uint8_t velocity)
+{
+    uint8_t packet[4] = {0x08, (uint8_t)(0x80 | channel), note, velocity};
+    if (tud_midi_mounted()) {
+        tud_midi_packet_write(packet);
+        printf("MIDI TX: Note Off Ch%d Note%d Vel%d\n", channel, note, velocity);
+    }
+}
+
+// Send MIDI Control Change message
+void send_midi_cc(uint8_t channel, uint8_t controller, uint8_t value)
+{
+    uint8_t packet[4] = {0x0B, (uint8_t)(0xB0 | channel), controller, value};
+    if (tud_midi_mounted()) {
+        tud_midi_packet_write(packet);
+        printf("MIDI TX: CC Ch%d CC%d Val%d\n", channel, controller, value);
+    }
+}
+
 
 
 int main()
@@ -552,8 +634,12 @@ int main()
     stdio_init_all();
 
     // Startup message
-    printf("Raspberry Pi Pico I2C Scan Program Starting\n");
+    printf("Raspberry Pi Pico USB-MIDI Device Starting\n");
     sleep_ms(2000); // Wait for serial communication stability
+
+    // Initialize USB-MIDI
+    tusb_init();
+    printf("USB-MIDI initialized\n");
 
     // I2C Initialisation. Using it at 400Khz.
     i2c_init(I2C_PORT, 400*1000);
@@ -571,7 +657,7 @@ int main()
     printf("7-segment LED display started (PCF8574 address: 0x%02X)\n", LED7SEGADDR);
     
     // Initialize state variables
-    int current_state = STATE_IC_UFLET_1;  // Default state
+    // current_state is now global variable, initialized at declaration
     int default_pattern = STATE_IC_UFLET_1;  // Default pattern
     int setting_exit_target = STATE_IC_UFLET_1;  // Setting mode exit target (toggles between 0,1,2)
     
@@ -677,6 +763,8 @@ int main()
                 display_degree(combined_value);
                 printf("State 0: Display updated to show combined value: (%d + %d) mod 12 = %d\n", 
                        current_code, current_key, combined_value);
+                // Send MIDI CC message
+                send_midi_cc(14, 15, combined_value);
             }
             
         } else {
@@ -689,6 +777,9 @@ int main()
         
         // Update previous button state
         previous_button = current_button;
+        
+        // Handle USB-MIDI tasks
+        tud_task();
         
         sleep_ms(10);
     }
