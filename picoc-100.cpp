@@ -781,6 +781,12 @@ int main()
         // Handle USB-MIDI tasks
         tud_task();
         
+        uint8_t upper_led_data = 0xFF;
+        uint8_t lower_led_data = 0xEE;
+        // ledtest
+        // i2c_write_blocking(I2C_PORT, UPPERPANEL, &upper_led_data, 1, false);
+        // i2c_write_blocking(I2C_PORT, LOWERPANEL, &lower_led_data, 1, false);
+    
         sleep_ms(10);
     }
 }
